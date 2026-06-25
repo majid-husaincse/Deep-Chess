@@ -4,13 +4,32 @@
 #include<vector>
 #include<algorithm>
 #include<sstream>
-
+#include<unordered_map>
+constexpr int TT_SCORE = 30000;
+constexpr int KILLER1  = 29000;
+constexpr int KILLER2  = 28999;
 using namespace std;
 using namespace chess;
+enum Flag
+{
+    EXACT,
+    LOWERBOUND,
+    UPPERBOUND
+};
+
+struct TTEntry
+{
+    uint64_t hash;
+    long long depth;
+    long long score;
+    Move bestMove;
+    Flag flag;
+};
 
 #define int long long
 const int INF = 1e9;
 const int CHECKMATE = 1e7;
+const int MAX_PLY = 128;
 const string START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const Board START_BOARD(START_FEN);
 
@@ -91,12 +110,6 @@ const int PST_KING_EG[64] = {
 
 const int* PST[5] = {PST_PAWN, PST_KNIGHT, PST_BISHOP, PST_ROOK, PST_QUEEN};
 
-
-
-class chessbot{
-
-    public:
-
     int PieceValue (PieceType x){
         using PT = PieceType;
         auto type = x.internal();
@@ -120,8 +133,7 @@ class chessbot{
         }
         return 0;
         }
-
-    int evaluate(Board &board){
+   int evaluate(Board &board){
 
         int Motepieces = 0; // non pawns
         int score = 0;
@@ -167,69 +179,234 @@ class chessbot{
         }
 
         }
+        if(board.sideToMove() == Color::BLACK)
+        score = -score;
         return score;
         }
-
-    static bool compare(const Move &a,const Move &b){
+bool compare(const Move &a,const Move &b){
         return a.score() > b.score();
         }
 
-    void ordermoves(Movelist &moves,Board &board){
-        for(auto &move : moves){
-            int score = 0;
-            if(board.isCapture(move)){
-                Piece victim = board.at(move.to());
-                Piece attacker = board.at(move.from());
-                score = 10*PieceValue(victim.type()) - PieceValue(attacker.type());
-            }
-            if(board.givesCheck(move) != CheckType::NO_CHECK) score+=10000;
-            move.setScore(score);
-        }
-        std::sort(moves.begin(), moves.end(), compare);
-        }
 
-    std::pair<int,Move> minimax(Board &board,int depth,int ply,int alpha,int beta,bool maximising){
-    
-        Movelist moves;
-        movegen::legalmoves(moves,board);
+class chessbot{
 
-        ordermoves(moves,board);
-        if(moves.empty()){
-            if( ! board.inCheck()){
-                return {0,Move::NULL_MOVE};
-            }
-                return {-(2*maximising-1)*(CHECKMATE-ply),Move::NULL_MOVE};
-            }
-        if(depth == 0){
-            return {evaluate(board),Move::NULL_MOVE};
-        }
-        Move movehehe = Move::NULL_MOVE;
-        for(auto &move : moves){
-            board.makeMove(move);
-            auto child = minimax(board,depth-1,ply+1,alpha,beta,1-maximising);
-            if(maximising){
-                if(child.first > alpha){
-                    alpha = child.first;
-                    movehehe = move;
-                }
-            }
-            else{
-                if(child.first < beta){
-                    beta = child.first;
-                    movehehe = move;
-                }
-            }
-            board.unmakeMove(move);
-            if(alpha>=beta){
-                return {child.first,move};
-            }
-                }
-            return {maximising ? alpha : beta,movehehe};
-            }
-    Move makebestmove(Board &board,int depth){
-        bool maximising = (board.sideToMove() == Color::WHITE);
-        return (minimax(board,depth,0,-INF,INF,maximising).second);
+    public:
+    Move killer[MAX_PLY][2];
+    unordered_map<uint64_t, TTEntry> TT;
+
+    // constructer
+    chessbot(){
+        TT.reserve(1<< 20);
     }
+
+
+void ordermoves(Movelist &moves, Board &board, int ply, Move ttMove)
+{
+    for(auto &move : moves)
+    {
+        if(move == ttMove){
+            move.setScore(TT_SCORE);
+            continue;
+        }
+
+        if(move == killer[ply][0]){
+            move.setScore(KILLER1);
+            continue;
+        }
+
+        if(move == killer[ply][1]){
+            move.setScore(KILLER2);
+            continue;
+        }
+
+        int score = 0;
+
+if(board.isCapture(move) && move.typeOf() != Move::CASTLING){
+    int victimValue = (move.typeOf() == Move::ENPASSANT)
+                        ? PieceValue(PieceType::PAWN)
+                        : PieceValue(board.at(move.to()).type());
+    Piece attacker = board.at(move.from());
+    score = 10 * victimValue - PieceValue(attacker.type());
+}
+
+        if(board.givesCheck(move) != CheckType::NO_CHECK)
+            score += 10000;
+
+        move.setScore(score);
+    }
+
+    sort(moves.begin(), moves.end(), compare);
+}
+
+int quiescence(Board &board, int alpha, int beta, int ply)
+{
+    if(ply >= MAX_PLY - 4)
+        return evaluate(board);
+
+    if(board.isHalfMoveDraw())
+    {
+        auto type = board.getHalfMoveDrawType();
+        return type.first == GameResultReason::CHECKMATE ? -(CHECKMATE - ply) : 0;
+    }
+    if(board.isRepetition(1))
+        return 0;
+
+    Movelist moves;
+
+    if(board.inCheck())
+    {
+        movegen::legalmoves(moves, board);
+
+        if(moves.empty())
+            return -(CHECKMATE - ply);
+    }
+    else
+    {
+        int stand = evaluate(board);
+
+        if(stand >= beta)
+            return stand;
+
+        if(stand > alpha)
+            alpha = stand;
+
+        movegen::legalmoves<movegen::MoveGenType::CAPTURE>(moves, board);
+    }
+
+    ordermoves(moves, board,ply,Move::NULL_MOVE);
+
+    int best = alpha;
+    for(auto &move : moves)
+    {
+        board.makeMove(move);
+
+        int score = -quiescence(board,-beta,-alpha,ply + 1);
+        board.unmakeMove(move);
+
+        if(score > best)
+            best = score;
+        if(score > alpha)
+            alpha = score;
+        if(alpha >= beta)
+            return score;      
+    }
+
+    return best;
+}
+
+pair<int,Move> negamax(Board &board,int depth,int ply,int alpha,int beta)
+{
+    if(board.isHalfMoveDraw())
+    {
+        auto type = board.getHalfMoveDrawType();
+        return {type.first == GameResultReason::CHECKMATE ? -(CHECKMATE - ply) : 0, Move::NULL_MOVE};
+    }
+    if(board.isRepetition(1))
+        return {0, Move::NULL_MOVE};
+
+    int alphaOrig = alpha;
+    int betaOrig = beta;
+
+    uint64_t key = board.hash();
+    Move ttMove = Move::NULL_MOVE;
+
+    auto it = TT.find(key);
+    if(it != TT.end())
+    {
+        TTEntry &entry = it->second;
+        ttMove = entry.bestMove;
+
+        if(entry.depth >= depth)
+        {
+            int ttScore = entry.score;
+            if(ttScore > CHECKMATE - 1000) ttScore -= ply;
+            else if(ttScore < -(CHECKMATE - 1000)) ttScore += ply;
+
+            if(entry.flag == EXACT)
+                return {ttScore, entry.bestMove};
+
+            if(entry.flag == LOWERBOUND)
+                alpha = max(alpha, ttScore);
+            else if(entry.flag == UPPERBOUND)
+                beta = min(beta, ttScore);
+
+            if(alpha >= beta)
+                return {ttScore, entry.bestMove};
+        }
+    }
+
+        if(depth <= 0)
+        return {quiescence(board,alpha,beta,ply),Move::NULL_MOVE};
+
+    Movelist moves;
+    movegen::legalmoves(moves,board);
+
+    if(moves.empty()){
+        if(!board.inCheck())
+            return {0,Move::NULL_MOVE};
+
+        return {-(CHECKMATE-ply),Move::NULL_MOVE};
+    }
+
+    ordermoves(moves, board, ply, ttMove);
+
+    Move bestMove = Move::NULL_MOVE;
+
+    for(auto &move : moves)
+    {
+        board.makeMove(move);
+        auto child = negamax(board,depth-1,ply+1,-beta,-alpha);
+        board.unmakeMove(move);
+
+        int score = -child.first;
+
+        if(score > alpha){
+            alpha = score;
+            bestMove = move;
+        }
+
+        if(alpha >= beta){
+
+            if(!board.isCapture(move)){
+                killer[ply][1] = killer[ply][0];
+                killer[ply][0] = move;
+            }
+
+            int storeScore = score;
+            if(storeScore > CHECKMATE - 1000) storeScore += ply;
+            else if(storeScore < -(CHECKMATE - 1000)) storeScore -= ply;
+
+            TT[key] = {key, depth, storeScore, move, LOWERBOUND};
+            return {score, move};
+        }
+    }
+
+    Flag flag;
+
+    if(alpha <= alphaOrig)
+        flag = UPPERBOUND;
+    else if(alpha >= betaOrig)
+        flag = LOWERBOUND;
+    else
+        flag = EXACT;
+
+    int storeScore = alpha;
+    if(storeScore > CHECKMATE - 1000) storeScore += ply;
+    else if(storeScore < -(CHECKMATE - 1000)) storeScore -= ply;
+
+    TT[key] = {key, depth, storeScore, bestMove, flag};
+
+    return {alpha, bestMove};
+}
+
+Move makebestmove(Board &board,int depth){
+
+    Move best = Move::NULL_MOVE;
+
+    for(int i=1;i<=depth;i++)
+        best = negamax(board,i,0,-INF,INF).second;
+    return best;
+}
 };
 
 signed main() {
@@ -251,9 +428,18 @@ signed main() {
             cout << "readyok\n";
         }
 
-        else if(line == "ucinewgame") {
-            board = Board(START_FEN);
-        }
+else if(line == "ucinewgame")
+{
+    board = Board(START_FEN);
+
+    Bot.TT.clear();
+
+    for(int i=0;i<MAX_PLY;i++)
+    {
+        Bot.killer[i][0] = Move::NULL_MOVE;
+        Bot.killer[i][1] = Move::NULL_MOVE;
+    }
+}
 
 else if(line.starts_with("position startpos"))
 {
@@ -264,6 +450,43 @@ else if(line.starts_with("position startpos"))
     string token;
     ss >> token; // position
     ss >> token; // startpos
+
+    while(ss >> token)
+    {
+        if(token=="moves")
+            continue;
+
+        Movelist ml;
+        movegen::legalmoves(ml,board);
+
+        for(auto m:ml)
+        {
+            if(uci::moveToUci(m)==token)
+            {
+                board.makeMove(m);
+                break;
+            }
+        }
+    }
+}
+
+else if(line.starts_with("position fen"))
+{
+    stringstream ss(line);
+
+    string token;
+    ss >> token; // position
+    ss >> token; // fen
+
+    string fen;
+    for(int i = 0; i < 6; i++)
+    {
+        ss >> token;
+        fen += token;
+        if(i < 5) fen += " ";
+    }
+
+    board = Board(fen);
 
     while(ss >> token)
     {
