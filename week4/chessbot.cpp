@@ -116,8 +116,7 @@ const int PST_KING_EG[64] = {
 
 const int* PST[5] = {PST_PAWN, PST_KNIGHT, PST_BISHOP, PST_ROOK, PST_QUEEN};
 
-int evaluate(Board &board)
-{
+int evaluate(Board &board) {
     int npm = 0;
     int score = 0;
     int whiteKingSq = -1, blackKingSq = -1;
@@ -128,22 +127,19 @@ int evaluate(Board &board)
     int whitePawnMaxRank[8];
     int blackPawnMinRank[8];
 
-    for (int f = 0; f < 8; f++)
-    {
+    for (int f = 0; f < 8; f++) {
         whitePawnMaxRank[f] = -1;
         blackPawnMinRank[f] = 8;
     }
 
-    for (int i = 0; i < 64; i++)
-    {
+    for (int i = 0; i < 64; i++) {
         Piece piece = board.at(Square(i));
         if (piece == Piece::NONE)
             continue;
 
         int t = (int)piece.type();
 
-        if (t == 5)
-        {
+        if (t == 5) {
             if (piece.color() == Color::WHITE)
                 whiteKingSq = i;
             else
@@ -154,25 +150,20 @@ int evaluate(Board &board)
         if (t != 0)
             npm += PIECE_VAL[t];
 
-        if (t == 2)
-        {
+        if (t == 2) {
             if (piece.color() == Color::WHITE)
                 whiteBishops++;
             else
                 blackBishops++;
         }
 
-        if (t == 0)
-        {
+        if (t == 0) {
             int file = i % 8;
             int rank = i / 8;
-            if (piece.color() == Color::WHITE)
-            {
+            if (piece.color() == Color::WHITE) {
                 whitePawnFile[file]++;
                 whitePawnMaxRank[file] = max(whitePawnMaxRank[file], rank);
-            }
-            else
-            {
+            } else {
                 blackPawnFile[file]++;
                 blackPawnMinRank[file] = min(blackPawnMinRank[file], rank);
             }
@@ -187,23 +178,20 @@ int evaluate(Board &board)
             score -= v + pos;
     }
 
-    for (int f = 0; f < 8; f++)
-    {
+    for (int f = 0; f < 8; f++) {
         if (whitePawnFile[f] > 1)
             score -= (whitePawnFile[f] - 1) * DOUBLED_PAWN_PENALTY;
         if (blackPawnFile[f] > 1)
             score += (blackPawnFile[f] - 1) * DOUBLED_PAWN_PENALTY;
 
-        if (whitePawnFile[f] > 0)
-        {
+        if (whitePawnFile[f] > 0) {
             bool isolated = (f == 0 || whitePawnFile[f - 1] == 0) &&
                              (f == 7 || whitePawnFile[f + 1] == 0);
             if (isolated)
                 score -= ISOLATED_PAWN_PENALTY;
         }
 
-        if (blackPawnFile[f] > 0)
-        {
+        if (blackPawnFile[f] > 0) {
             bool isolated = (f == 0 || blackPawnFile[f - 1] == 0) &&
                              (f == 7 || blackPawnFile[f + 1] == 0);
             if (isolated)
@@ -211,8 +199,7 @@ int evaluate(Board &board)
         }
     }
 
-    for (int f = 0; f < 8; f++)
-    {
+    for (int f = 0; f < 8; f++) {
         if (whitePawnFile[f] == 0)
             continue;
 
@@ -227,8 +214,7 @@ int evaluate(Board &board)
             score += PASSED_PAWN_BONUS[rank];
     }
 
-    for (int f = 0; f < 8; f++)
-    {
+    for (int f = 0; f < 8; f++) {
         if (blackPawnFile[f] == 0)
             continue;
 
@@ -271,8 +257,7 @@ int evaluate(Board &board)
 
 enum Flag { EXACT, LOWERBOUND, UPPERBOUND };
 
-struct TTEntry
-{
+struct TTEntry {
     uint64_t hash;
     int depth;
     int score;
@@ -282,8 +267,7 @@ struct TTEntry
 
 constexpr size_t TT_MAX_ENTRIES = 4000000;
 
-class Chessbot
-{
+class Chessbot {
 public:
     Move killer[MAX_PLY][2];
     int history[2][64][64] = {};
@@ -296,16 +280,13 @@ public:
     int budgetMs = 0;
     bool timed = false;
 
-    Chessbot()
-    {
+    Chessbot() {
         TT.reserve(1 << 20);
         clearKillers();
     }
 
-    void clearKillers()
-    {
-        for (int i = 0; i < MAX_PLY; i++)
-        {
+    void clearKillers() {
+        for (int i = 0; i < MAX_PLY; i++) {
             killer[i][0] = Move::NULL_MOVE;
             killer[i][1] = Move::NULL_MOVE;
         }
@@ -320,29 +301,24 @@ public:
         searchStart=chrono::steady_clock::now();
     }
 
-    int elapsedMs() const
-    {
+    int elapsedMs() const {
         return (int)chrono::duration_cast<chrono::milliseconds>(
             chrono::steady_clock::now() - searchStart).count();
     }
 
-    void checkTime()
-    {
+    void checkTime() {
         if (timed && (nodes & 255) == 0 && elapsedMs() >= budgetMs)
             stopped = true;
     }
 
-    int mvvLva(Board &board, const Move &m) const
-    {
+    int mvvLva(Board &board, const Move &m) const {
         int attackerType = (int)board.at(m.from()).type();
         int victimType = (m.typeOf() == Move::ENPASSANT) ? 0 : (int)board.at(m.to()).type();
         return MVV_VAL[victimType] * 10 - PIECE_VAL[attackerType];
     }
 
-    bool hasNonPawnMaterial(Board &board, Color side)
-    {
-        for (int i = 0; i < 64; i++)
-        {
+    bool hasNonPawnMaterial(Board &board, Color side) {
+        for (int i = 0; i < 64; i++) {
             Piece piece = board.at(Square(i));
             if (piece == Piece::NONE)
                 continue;
@@ -356,36 +332,29 @@ public:
         return false;
     }
 
-    void orderMoves(Movelist &moves, Board &board, int ply, Move ttMove)
-    {
-        for (auto &move : moves)
-        {
-            if (move == ttMove)
-            {
+    void orderMoves(Movelist &moves, Board &board, int ply, Move ttMove) {
+        for (auto &move : moves) {
+            if (move == ttMove) {
                 move.setScore(MO_TT);
                 continue;
             }
 
-            if (board.isCapture(move))
-            {
+            if (board.isCapture(move)) {
                 move.setScore(MO_CAP + mvvLva(board, move));
                 continue;
             }
 
-            if (move.typeOf() == Move::PROMOTION)
-            {
+            if (move.typeOf() == Move::PROMOTION) {
                 move.setScore(MO_CAP);
                 continue;
             }
 
-            if (move == killer[ply][0])
-            {
+            if (move == killer[ply][0]) {
                 move.setScore(MO_KILLER1);
                 continue;
             }
 
-            if (move == killer[ply][1])
-            {
+            if (move == killer[ply][1]) {
                 move.setScore(MO_KILLER2);
                 continue;
             }
@@ -394,13 +363,10 @@ public:
             move.setScore(history[color][move.from().index()][move.to().index()]);
         }
 
-        sort(moves.begin(), moves.end(), [](const Move &a, const Move &b) {
-            return a.score() > b.score();
-        });
+        sort(moves.begin(), moves.end(), [](const Move &a, const Move &b) { return a.score() > b.score(); });
     }
 
-    int quiescence(Board &board, int alpha, int beta, int ply)
-    {
+    int quiescence(Board &board, int alpha, int beta, int ply) {
         nodes++;
         checkTime();
         if (stopped)
@@ -409,8 +375,7 @@ public:
         if (ply >= MAX_PLY - 4)
             return evaluate(board);
 
-        if (board.isHalfMoveDraw())
-        {
+        if (board.isHalfMoveDraw()) {
             auto res = board.getHalfMoveDrawType();
             return (res.first == GameResultReason::CHECKMATE) ? -(CHECKMATE - ply) : 0;
         }
@@ -424,15 +389,12 @@ public:
         int best;
         int stand = 0;
 
-        if (inCheckNode)
-        {
+        if (inCheckNode) {
             movegen::legalmoves(moves, board);
             if (moves.empty())
                 return -(CHECKMATE - ply);
             best = -INF;
-        }
-        else
-        {
+        } else {
             stand = evaluate(board);
             if (stand >= beta)
                 return stand;
@@ -444,12 +406,10 @@ public:
 
         orderMoves(moves, board, ply, Move::NULL_MOVE);
 
-        for (int moveNo = 0; moveNo < (int)moves.size(); moveNo++)
-        {
+        for (int moveNo = 0; moveNo < (int)moves.size(); moveNo++) {
             Move move = moves[moveNo];
 
-            if (!inCheckNode)
-            {
+            if (!inCheckNode) {
                 int victimType = (move.typeOf() == Move::ENPASSANT) ? 0 : (int)board.at(move.to()).type();
                 if (stand + PIECE_VAL[victimType] + DELTA_MARGIN < alpha)
                     continue;
@@ -473,8 +433,7 @@ public:
         return best;
     }
 
-    int negamax(Board &board, int depth, int ply, int alpha, int beta, vector<Move> &pv)
-    {
+    int negamax(Board &board, int depth, int ply, int alpha, int beta, vector<Move> &pv) {
         pv.clear();
 
         nodes++;
@@ -485,8 +444,7 @@ public:
         if (ply >= MAX_PLY - 4)
             return evaluate(board);
 
-        if (board.isHalfMoveDraw())
-        {
+        if (board.isHalfMoveDraw()) {
             auto res = board.getHalfMoveDrawType();
             return (res.first == GameResultReason::CHECKMATE) ? -(CHECKMATE - ply) : 0;
         }
@@ -504,21 +462,18 @@ public:
         Move ttMove = Move::NULL_MOVE;
 
         auto it = TT.find(key);
-        if (it != TT.end())
-        {
+        if (it != TT.end()) {
             TTEntry &e = it->second;
             ttMove = e.bestMove;
 
-            if (e.depth >= depth && ply > 0)
-            {
+            if (e.depth >= depth && ply > 0) {
                 int s = e.score;
                 if (s > MATE_BOUND)
                     s -= ply;
                 if (s < -MATE_BOUND)
                     s += ply;
 
-                if (e.flag == EXACT)
-                {
+                if (e.flag == EXACT) {
                     pv = {e.bestMove};
                     return s;
                 }
@@ -527,8 +482,7 @@ public:
                 else
                     beta = min(beta, s);
 
-                if (alpha >= beta)
-                {
+                if (alpha >= beta) {
                     pv = {e.bestMove};
                     return s;
                 }
@@ -539,8 +493,7 @@ public:
             return quiescence(board, alpha, beta, ply);
 
         if (!inCheck && depth >= NULL_MOVE_MIN_DEPTH && ply > 0 &&
-            beta < MATE_BOUND && hasNonPawnMaterial(board, board.sideToMove()))
-        {
+            beta < MATE_BOUND && hasNonPawnMaterial(board, board.sideToMove())) {
             int reduction = (depth >= 6) ? 3 : 2;
             vector<Move> nullPv;
 
@@ -564,8 +517,7 @@ public:
         orderMoves(moves, board, ply, ttMove);
 
         bool canFutilityPrune = false;
-        if (!inCheck && depth <= 2 && llabs(alpha) < MATE_BOUND && llabs(beta) < MATE_BOUND)
-        {
+        if (!inCheck && depth <= 2 && llabs(alpha) < MATE_BOUND && llabs(beta) < MATE_BOUND) {
             int margin = (depth == 1) ? FUTILITY_MARGIN_1 : FUTILITY_MARGIN_2;
             canFutilityPrune = (evaluate(board) + margin <= alpha);
         }
@@ -574,8 +526,7 @@ public:
         int best = -INF;
         vector<Move> childPv;
 
-        for (int moveNo = 0; moveNo < (int)moves.size(); moveNo++)
-        {
+        for (int moveNo = 0; moveNo < (int)moves.size(); moveNo++) {
             Move move = moves[moveNo];
             bool isCapture = board.isCapture(move);
             bool isPromotion = move.typeOf() == Move::PROMOTION;
@@ -588,16 +539,12 @@ public:
 
             int score;
 
-            if (moveNo == 0)
-            {
+            if (moveNo == 0) {
                 score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, childPv);
-            }
-            else
-            {
+            } else {
                 int reduction = 0;
                 if (depth >= LMR_MIN_DEPTH && moveNo >= LMR_MOVE_THRESHOLD &&
-                    !isCapture && !isPromotion && !isKiller && !inCheck)
-                {
+                    !isCapture && !isPromotion && !isKiller && !inCheck) {
                     reduction = (moveNo >= 10) ? 2 : 1;
                 }
 
@@ -615,8 +562,7 @@ public:
             if (stopped)
                 return 0;
 
-            if (score > best)
-            {
+            if (score > best) {
                 best = score;
                 bestMove = move;
                 pv.clear();
@@ -627,10 +573,8 @@ public:
             if (best > alpha)
                 alpha = best;
 
-            if (alpha >= beta)
-            {
-                if (!isCapture)
-                {
+            if (alpha >= beta) {
+                if (!isCapture) {
                     killer[ply][1] = killer[ply][0];
                     killer[ply][0] = move;
                     int color = (board.sideToMove() == Color::WHITE);
@@ -661,20 +605,18 @@ public:
             stored -= ply;
 
         auto existing = TT.find(key);
-        if (existing == TT.end() || existing->second.depth <= depth)
-        {
-        if (existing != TT.end()){
-            existing->second = {key, depth, stored, bestMove, flag};}
-        else if (TT.size() < TT_MAX_ENTRIES){
-            TT.emplace(key, TTEntry{key, depth, stored, bestMove, flag});
-        }
+        if (existing == TT.end() || existing->second.depth <= depth) {
+            if (existing != TT.end()) {
+                existing->second = {key, depth, stored, bestMove, flag};
+            } else if (TT.size() < TT_MAX_ENTRIES) {
+                TT.emplace(key, TTEntry{key, depth, stored, bestMove, flag});
+            }
         }
 
         return best;
     }
 
-    Move bestMove(Board &board, int maxDepth)
-    {
+    Move bestMove(Board &board, int maxDepth) {
         Move best = Move::NULL_MOVE;
         vector<Move> pv;
         int lastIterationTime = 0;
@@ -687,10 +629,8 @@ public:
                 best = ml[0];
         }
 
-        for (int depth = 1; depth <= maxDepth; depth++)
-        {
-            if (timed)
-            {
+        for (int depth = 1; depth <= maxDepth; depth++) {
+            if (timed) {
                 if (elapsedMs() >= budgetMs)
                     break;
 
@@ -702,16 +642,12 @@ public:
             vector<Move> iterPv;
             int score;
 
-            if (depth <= 2)
-            {
+            if (depth <= 2) {
                 score = negamax(board, depth, 0, -INF, INF, iterPv);
-            }
-            else
-            {
+            } else {
                 int window = 35;
 
-                while (true)
-                {
+                while (true) {
                     int alpha = max(-INF, lastScore - window);
                     int beta = min(INF, lastScore + window);
 
@@ -720,8 +656,7 @@ public:
                     if (stopped)
                         break;
 
-                    if (score <= alpha || score >= beta)
-                    {
+                    if (score <= alpha || score >= beta) {
                         window *= 2;
                         continue;
                     }
@@ -759,10 +694,8 @@ public:
         return best;
     }
 
-    static string uciScore(int score)
-    {
-        if (llabs(score) > MATE_BOUND)
-        {
+    static string uciScore(int score) {
+        if (llabs(score) > MATE_BOUND) {
             int plies = CHECKMATE - llabs(score);
             int moves = (plies + 1) / 2;
             return "mate " + to_string(score > 0 ? moves : -moves);
@@ -777,8 +710,7 @@ int computeBudget(int myTime, int myInc, int movesToGo){
         return 5;
 
     // GUI knows roughly how many moves remain
-    if (movesToGo > 0)
-    {
+    if (movesToGo > 0) {
         int budget = myTime / (movesToGo + 1) + myInc;
 
         budget = min(budget, myTime / 3);
@@ -808,8 +740,7 @@ int computeBudget(int myTime, int myInc, int movesToGo){
     return budget;
 }
 
-signed main()
-{
+signed main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
 
@@ -820,45 +751,33 @@ signed main()
     string lastFen = START_FEN;
 
     string line;
-    while (getline(cin, line))
-    {
+    while (getline(cin, line)) {
         if (line.empty())
             continue;
 
-        if (line == "uci")
-        {
+        if (line == "uci") {
             cout << "id name NunnuBot\n";
             cout << "id author Majid\n";
             cout << "uciok\n" << flush;
-        }
-        else if (line == "isready")
-        {
+        } else if (line == "isready") {
             cout << "readyok\n" << flush;
-        }
-        else if (line == "ucinewgame")
-        {
+        } else if (line == "ucinewgame") {
             board = Board(START_FEN);
             appliedMoves.clear();
             lastFen = START_FEN;
             bot.TT.clear();
             bot.clearKillers();
-        }
-        else if (line.rfind("position", 0) == 0)
-        {
+        } else if (line.rfind("position", 0) == 0) {
             stringstream ss(line);
             string token;
             ss >> token;
             ss >> token;
 
             string baseFen;
-            if (token == "startpos")
-            {
+            if (token == "startpos") {
                 baseFen = START_FEN;
-            }
-            else if (token == "fen")
-            {
-                for (int i = 0; i < 6; i++)
-                {
+            } else if (token == "fen") {
+                for (int i = 0; i < 6; i++) {
                     ss >> token;
                     if (i)
                         baseFen += " ";
@@ -867,8 +786,7 @@ signed main()
             }
 
             vector<string> moveTokens;
-            while (ss >> token)
-            {
+            while (ss >> token) {
                 if (token == "moves")
                     continue;
                 moveTokens.push_back(token);
@@ -876,12 +794,9 @@ signed main()
 
             bool isExtension = (baseFen == lastFen) &&
                                 (moveTokens.size() >= appliedMoves.size());
-            if (isExtension)
-            {
-                for (size_t i = 0; i < appliedMoves.size(); i++)
-                {
-                    if (moveTokens[i] != appliedMoves[i])
-                    {
+            if (isExtension) {
+                for (size_t i = 0; i < appliedMoves.size(); i++) {
+                    if (moveTokens[i] != appliedMoves[i]) {
                         isExtension = false;
                         break;
                     }
@@ -889,35 +804,27 @@ signed main()
             }
 
             size_t startIdx;
-            if (isExtension)
-            {
+            if (isExtension) {
                 startIdx = appliedMoves.size();
-            }
-            else
-            {
+            } else {
                 board = Board(baseFen);
                 lastFen = baseFen;
                 appliedMoves.clear();
                 startIdx = 0;
             }
 
-            for (size_t i = startIdx; i < moveTokens.size(); i++)
-            {
+            for (size_t i = startIdx; i < moveTokens.size(); i++) {
                 Movelist ml;
                 movegen::legalmoves(ml, board);
-                for (auto &m : ml)
-                {
-                    if (uci::moveToUci(m) == moveTokens[i])
-                    {
+                for (auto &m : ml) {
+                    if (uci::moveToUci(m) == moveTokens[i]) {
                         board.makeMove(m);
                         break;
                     }
                 }
             }
             appliedMoves = moveTokens;
-        }
-        else if (line.rfind("go", 0) == 0)
-        {
+        } else if (line.rfind("go", 0) == 0) {
             stringstream ss(line);
             string token;
             ss >> token;
@@ -929,8 +836,7 @@ signed main()
             int movestogo = -1;
             bool infinite = false;
 
-            while (ss >> token)
-            {
+            while (ss >> token) {
                 if (token == "wtime")
                     ss >> wtime;
                 else if (token == "btime")
@@ -953,23 +859,18 @@ signed main()
             bool isTimed = true;
             int maxDepth = MAX_PLY;
 
-            if (movetime > 0)
-            {
+            if (movetime > 0) {
                 budget = movetime - 30;
                 if (budget < 0)
                     budget = 0;
-            }
-            else if (!infinite && (wtime >= 0 || btime >= 0))
-            {
+            } else if (!infinite && (wtime >= 0 || btime >= 0)) {
                 bool white = (board.sideToMove() == Color::WHITE);
                 int myTime = white ? wtime : btime;
                 int myInc = white ? winc : binc;
                 if (myTime < 0)
                     myTime = 0;
                 budget = computeBudget(myTime, myInc, movestogo);
-            }
-            else
-            {
+            } else {
                 isTimed = false;
                 maxDepth = (depth > 0) ? depth : PLAY_DEPTH;
                 budget = 0;
@@ -983,8 +884,7 @@ signed main()
             bot.newSearch(budget, isTimed);
             Move best = bot.bestMove(board, maxDepth);
 
-            if (best == Move::NULL_MOVE)
-            {
+            if (best == Move::NULL_MOVE) {
                 Movelist ml;
                 movegen::legalmoves(ml, board);
                 if (!ml.empty())
@@ -992,9 +892,7 @@ signed main()
             }
 
             cout << "bestmove " << uci::moveToUci(best) << "\n" << flush;
-        }
-        else if (line == "quit")
-        {
+        } else if (line == "quit") {
             break;
         }
     }

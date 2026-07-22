@@ -46,15 +46,13 @@ bool stopSearch = false;
 
 Board board;
 
-enum TTFlag
-{
+enum TTFlag {
     EXACT,
     LOWERBOUND,
     UPPERBOUND
 };
 
-struct TTEntry
-{
+struct TTEntry {
     uint64_t key = 0;
     int depth = -1;
     int score = 0;
@@ -67,8 +65,7 @@ constexpr size_t TT_MASK = TT_SIZE - 1;
 
 std::vector<TTEntry> tt(TT_SIZE);
 
-struct EvalEntry
-{
+struct EvalEntry {
     uint64_t key = 0;
     int32_t score = 0;
 };
@@ -81,39 +78,30 @@ std::vector<EvalEntry> evalCache(EVAL_CACHE_SIZE);
 uint64_t evalCacheProbes = 0;
 uint64_t evalCacheHits = 0;
 
-struct SearchStats
-{
+struct SearchStats {
     uint64_t nodes = 0;
-
     uint64_t ttProbe = 0;
     uint64_t ttHit = 0;
-
     uint64_t nullAttempts = 0;
     uint64_t nullCutoffs = 0;
-
     uint64_t lmrAttempts = 0;
     uint64_t lmrResearches = 0;
-
     uint64_t pvsSearches = 0;
     uint64_t pvsResearches = 0;
-
     uint64_t hashMoveFirst = 0;
     uint64_t killerCutoffs = 0;
     uint64_t historyCutoffs = 0;
     uint64_t captureCutoffs = 0;
-
     uint64_t depthCond = 0;
     uint64_t moveCond = 0;
     uint64_t quietCond = 0;
     uint64_t notCheckCond = 0;
-
     uint64_t nullAtMax = 0;
     uint64_t nullAtMin = 0;
     uint64_t ttWrites = 0;
 };
 
-std::filesystem::path getExeDir()
-{
+std::filesystem::path getExeDir() {
     char path[MAX_PATH];
     GetModuleFileNameA(NULL, path, MAX_PATH);
     return std::filesystem::path(path).parent_path();
@@ -121,25 +109,21 @@ std::filesystem::path getExeDir()
 
 SearchStats stats;
 
-int moveBudget(int rem, int inc)
-{
+int moveBudget(int rem, int inc) {
     int moveTime = rem / 30 + inc * 3 / 4;
     moveTime = std::min(moveTime, rem / 5);
     return std::max(10, moveTime);
 }
 
-bool outOfTime()
-{
+bool outOfTime() {
     if (fixedDepth != -1)
         return false;
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - searchStart).count();
     return elapsed >= timeLimitMs;
 }
 
-int pieceValue(PieceType pt)
-{
-    switch (pt.internal())
-    {
+int pieceValue(PieceType pt) {
+    switch (pt.internal()) {
     case PieceType::PAWN:
         return 100;
     case PieceType::KNIGHT:
@@ -155,10 +139,8 @@ int pieceValue(PieceType pt)
     }
 }
 
-bool onlyKingsAndPawns()
-{
-    for (int sq = 0; sq < 64; sq++)
-    {
+bool onlyKingsAndPawns() {
+    for (int sq = 0; sq < 64; sq++) {
         Piece p = board.at(Square(sq));
         if (p.type() != PieceType::NONE and p.type() != PieceType::KING and p.type() != PieceType::PAWN)
             return false;
@@ -166,57 +148,41 @@ bool onlyKingsAndPawns()
     return true;
 }
 
-void orderMoves(Movelist &moves, int ply)
-{
-
+void orderMoves(Movelist &moves, int ply) {
     uint64_t hashKey = board.hash();
-    
     size_t tt_index = hashKey & TT_MASK;
     const TTEntry &entry = tt[tt_index];
 
     Move hashMove = Move::NULL_MOVE;
-
-    if (entry.depth != -1 && entry.key == hashKey)
-    {
+    if (entry.depth != -1 && entry.key == hashKey) {
         hashMove = entry.bestMove;
     }
 
-    for (auto &move : moves)
-    {
-
+    for (auto &move : moves) {
         int score = 0;
 
-        if (move == hashMove)
-        {
+        if (move == hashMove) {
             score += 20000;
         }
 
-        if (board.isCapture(move))
-        {
+        if (board.isCapture(move)) {
             int victimVal;
-            if (move.typeOf() == Move::ENPASSANT)
-            {
+            if (move.typeOf() == Move::ENPASSANT) {
                 victimVal = pieceValue(PieceType::PAWN);
             }
-            else
-            {
+            else {
                 victimVal = pieceValue(board.at(move.to()).type());
             }
-            Piece victim =
-                board.at(move.to());
+            Piece victim = board.at(move.to());
+            Piece attacker = board.at(move.from());
 
-            Piece attacker =
-                board.at(move.from());
-
-            score =
-                CAPTURE_BASE + 10 * victimVal - pieceValue(attacker.type());
+            score = CAPTURE_BASE + 10 * victimVal - pieceValue(attacker.type());
 
             board.makeMove(move);
             bool defended = board.isAttacked(move.to(), board.sideToMove());
             board.unmakeMove(move);
 
-            if (defended)
-            {
+            if (defended) {
                 int gain = victimVal - pieceValue(attacker.type());
                 if (gain < 0)
                     score -= BAD_CAPTURE_SCALE * gain;
@@ -224,14 +190,11 @@ void orderMoves(Movelist &moves, int ply)
             else
                 score += SAFE_CAPTURE_BONUS;
         }
-        else
-        {
-            if (move == killerMoves[ply][0])
-            {
+        else {
+            if (move == killerMoves[ply][0]) {
                 score += 9000;
             }
-            else if (move == killerMoves[ply][1])
-            {
+            else if (move == killerMoves[ply][1]) {
                 score += 8000;
             }
 
@@ -248,45 +211,37 @@ void orderMoves(Movelist &moves, int ply)
     std::sort(moves.begin(),
               moves.end(),
               [](const Move &a,
-                 const Move &b)
-              {
+                 const Move &b) {
                   return a.score() > b.score();
               });
 }
 
-int kingShield(Color c, int file, int rank)
-{
+int kingShield(Color c, int file, int rank) {
     int ans = 0;
-    if (c == Color::WHITE)
-    {
+    if (c == Color::WHITE) {
         if (rank == 7)
             return 0;
         if (board.at(Square(8 * (rank + 1) + file)).type() == PieceType::PAWN and board.at(Square(8 * (rank + 1) + file)).color() == c)
             ans++;
-        if (file > 0)
-        {
+        if (file > 0) {
             if (board.at(Square(8 * (rank + 1) + file - 1)).type() == PieceType::PAWN and board.at(Square(8 * (rank + 1) + file - 1)).color() == c)
                 ans++;
         }
-        if (file < 7)
-        {
+        if (file < 7) {
             if (board.at(Square(8 * (rank + 1) + file + 1)).type() == PieceType::PAWN and board.at(Square(8 * (rank + 1) + file + 1)).color() == c)
                 ans++;
         }
     }
-    else
-    {
+    else {
         if (rank == 0)
             return 0;
         if (board.at(Square(8 * (rank - 1) + file)).type() == PieceType::PAWN and board.at(Square(8 * (rank - 1) + file)).color() == c)
             ans++;
-        if (file > 0)
-        {
+        if (file > 0) {
             if (board.at(Square(8 * (rank - 1) + file - 1)).type() == PieceType::PAWN and board.at(Square(8 * (rank - 1) + file - 1)).color() == c)
                 ans++;
         }
-        if (file < 7)
-        {
+        if (file < 7) {
             if (board.at(Square(8 * (rank - 1) + file + 1)).type() == PieceType::PAWN and board.at(Square(8 * (rank - 1) + file + 1)).color() == c)
                 ans++;
         }
@@ -294,8 +249,7 @@ int kingShield(Color c, int file, int rank)
     return ans;
 }
 
-int classic_eval()
-{
+int classic_eval() {
     // Mobility Bonuses
     const int passedPawnMG[8] = {0, 5, 10, 20, 35, 60, 100, 0};
     const int passedPawnEG[8] = {0, 10, 25, 45, 70, 110, 180, 0};
@@ -329,11 +283,9 @@ int classic_eval()
     int phase = 0;
 
     // Game Phase
-    for (int sq = 0; sq < 64; sq++)
-    {
+    for (int sq = 0; sq < 64; sq++) {
         Piece p = board.at(Square(sq));
-        switch (p.type().internal())
-        {
+        switch (p.type().internal()) {
         case PieceType::KNIGHT:
             phase += 1;
             break;
@@ -347,15 +299,12 @@ int classic_eval()
             phase += 4;
             break;
         }
-        if (p.type() == PieceType::KING)
-        {
-            if (p.color() == Color::WHITE)
-            {
+        if (p.type() == PieceType::KING) {
+            if (p.color() == Color::WHITE) {
                 whiteKing = Square(sq);
                 whiteKingZone = attacks::king(Square(sq));
             }
-            else
-            {
+            else {
                 blackKing = Square(sq);
                 blackKingZone = attacks::king(Square(sq));
             }
@@ -365,8 +314,7 @@ int classic_eval()
     int blackAttackScore = 0, whiteAttackScore = 0, whiteAttackers = 0, blackAttackers = 0;
 
     // Material, PST, Mobility, King Shield, and Pawn Data
-    for (int sq = 0; sq < 64; sq++)
-    {
+    for (int sq = 0; sq < 64; sq++) {
         Piece p = board.at(Square(sq));
         if (p == Piece::NONE)
             continue;
@@ -378,12 +326,10 @@ int classic_eval()
         int mobility;
         Bitboard attacks;
 
-        if (p.color() == Color::WHITE)
-        {
+        if (p.color() == Color::WHITE) {
             midGame += val;
             endGame += val;
-            switch (p.type().internal())
-            {
+            switch (p.type().internal()) {
             case PieceType::PAWN:
                 midGame += pawnOpenTable[sq];
                 endGame += pawnEndTable[sq];
@@ -395,8 +341,7 @@ int classic_eval()
                 endGame += knightEndTable[sq];
                 attacks = attacks::knight(Square(sq));
                 mobility = (attacks & ~board.us(Color::WHITE)).count();
-                if ((attacks & blackKingZone).count())
-                {
+                if ((attacks & blackKingZone).count()) {
                     whiteAttackers++;
                     whiteAttackScore += KNIGHT_ATTACK;
                     whiteAttackScore += 2 * ((attacks & blackKingZone).count() - 1);
@@ -411,8 +356,7 @@ int classic_eval()
                 attacks = attacks::bishop(Square(sq), occ);
                 mobility = (attacks & ~board.us(Color::WHITE)).count();
 
-                if ((attacks & blackKingZone).count())
-                {
+                if ((attacks & blackKingZone).count()) {
                     whiteAttackers++;
                     whiteAttackScore += BISHOP_ATTACK;
                     whiteAttackScore += 2 * ((attacks & blackKingZone).count() - 1);
@@ -426,8 +370,7 @@ int classic_eval()
                 attacks = attacks::rook(Square(sq), occ);
                 mobility = (attacks & ~board.us(Color::WHITE)).count();
 
-                if ((attacks & blackKingZone).count())
-                {
+                if ((attacks & blackKingZone).count()) {
                     whiteAttackers++;
                     whiteAttackScore += ROOK_ATTACK;
                     whiteAttackScore += 2 * ((attacks & blackKingZone).count() - 1);
@@ -441,8 +384,7 @@ int classic_eval()
                 attacks = attacks::queen(Square(sq), occ);
                 mobility = (attacks & ~board.us(Color::WHITE)).count();
 
-                if ((attacks & blackKingZone).count())
-                {
+                if ((attacks & blackKingZone).count()) {
                     whiteAttackers++;
                     whiteAttackScore += QUEEN_ATTACK;
                     whiteAttackScore += 2 * ((attacks & blackKingZone).count() - 1);
@@ -458,12 +400,10 @@ int classic_eval()
                 break;
             }
         }
-        else
-        {
+        else {
             midGame -= val;
             endGame -= val;
-            switch (p.type().internal())
-            {
+            switch (p.type().internal()) {
             case PieceType::PAWN:
                 midGame -= pawnOpenTable[sq ^ 56];
                 endGame -= pawnEndTable[sq ^ 56];
@@ -476,8 +416,7 @@ int classic_eval()
                 attacks = attacks::knight(Square(sq));
                 mobility = (attacks & ~board.us(Color::BLACK)).count();
 
-                if ((attacks & whiteKingZone).count())
-                {
+                if ((attacks & whiteKingZone).count()) {
                     blackAttackers++;
                     blackAttackScore += KNIGHT_ATTACK;
                     blackAttackScore += 2 * ((attacks & whiteKingZone).count() - 1);
@@ -492,8 +431,7 @@ int classic_eval()
                 attacks = attacks::bishop(Square(sq), occ);
                 mobility = (attacks & ~board.us(Color::BLACK)).count();
 
-                if ((attacks & whiteKingZone).count())
-                {
+                if ((attacks & whiteKingZone).count()) {
                     blackAttackers++;
                     blackAttackScore += BISHOP_ATTACK;
                     blackAttackScore += 2 * ((attacks & whiteKingZone).count() - 1);
@@ -507,8 +445,7 @@ int classic_eval()
                 attacks = attacks::rook(Square(sq), occ);
                 mobility = (attacks & ~board.us(Color::BLACK)).count();
 
-                if ((attacks & whiteKingZone).count())
-                {
+                if ((attacks & whiteKingZone).count()) {
                     blackAttackers++;
                     blackAttackScore += ROOK_ATTACK;
                     blackAttackScore += 2 * ((attacks & whiteKingZone).count() - 1);
@@ -522,8 +459,7 @@ int classic_eval()
                 attacks = attacks::queen(Square(sq), occ);
                 mobility = (attacks & ~board.us(Color::BLACK)).count();
 
-                if ((attacks & whiteKingZone).count())
-                {
+                if ((attacks & whiteKingZone).count()) {
                     blackAttackers++;
                     blackAttackScore += QUEEN_ATTACK;
                     blackAttackScore += 2 * ((attacks & whiteKingZone).count() - 1);
@@ -545,35 +481,29 @@ int classic_eval()
     midGame -= attackerMultiplier[std::min(blackAttackers, 8)] * blackAttackScore;
 
     // Bishop pair bonus
-    if (whiteBishop >= 2)
-    {
+    if (whiteBishop >= 2) {
         midGame += 25;
         endGame += 45;
     }
-    if (blackBishop >= 2)
-    {
+    if (blackBishop >= 2) {
         midGame -= 25;
         endGame -= 45;
     }
 
     // Double Pawns Penalty
-    for (int file = 0; file < 8; file++)
-    {
-        if (whitePawnFile[file] > 1)
-        {
+    for (int file = 0; file < 8; file++) {
+        if (whitePawnFile[file] > 1) {
             midGame -= 15 * (whitePawnFile[file] - 1);
             endGame -= 8 * (whitePawnFile[file] - 1);
         }
-        if (blackPawnFile[file] > 1)
-        {
+        if (blackPawnFile[file] > 1) {
             midGame += 15 * (blackPawnFile[file] - 1);
             endGame += 8 * (blackPawnFile[file] - 1);
         }
     }
 
     // Pawns and Rooks
-    for (int sq = 0; sq < 64; sq++)
-    {
+    for (int sq = 0; sq < 64; sq++) {
         Piece p = board.at(Square(sq));
         if (p == Piece::NONE)
             continue;
@@ -581,59 +511,49 @@ int classic_eval()
         int file = sq % 8;
         int rank = sq / 8;
 
-        if (p.type() == PieceType::PAWN)
-        {
-            if (p.color() == Color::WHITE)
-            {
+        if (p.type() == PieceType::PAWN) {
+            if (p.color() == Color::WHITE) {
                 // Isolated Pawn
                 bool isolated = true;
                 if (file > 0 && whitePawnFile[file - 1] > 0)
                     isolated = false;
                 if (file < 7 && whitePawnFile[file + 1] > 0)
                     isolated = false;
-                if (isolated)
-                {
+                if (isolated) {
                     midGame -= 10;
                     endGame -= 5;
                 }
 
                 // Passed Pawn
                 bool isPassed = true;
-                for (int r = rank + 1; r < 8; r++)
-                {
-                    if (blackPawns & (1ULL << (r * 8 + file)))
-                    {
+                for (int r = rank + 1; r < 8; r++) {
+                    if (blackPawns & (1ULL << (r * 8 + file))) {
                         isPassed = false;
                         break;
                     }
-                    if (file > 0 && (blackPawns & (1ULL << (r * 8 + file - 1))))
-                    {
+                    if (file > 0 && (blackPawns & (1ULL << (r * 8 + file - 1)))) {
                         isPassed = false;
                         break;
                     }
-                    if (file < 7 && (blackPawns & (1ULL << (r * 8 + file + 1))))
-                    {
+                    if (file < 7 && (blackPawns & (1ULL << (r * 8 + file + 1)))) {
                         isPassed = false;
                         break;
                     }
                 }
-                if (isPassed)
-                {
+                if (isPassed) {
                     midGame += passedPawnMG[rank];
                     endGame += passedPawnEG[rank];
                 }
 
                 // Chained Pawn
                 bool chained = false;
-                if (rank > 0)
-                {
+                if (rank > 0) {
                     if (file > 0 && (whitePawns & (1ULL << ((rank - 1) * 8 + file - 1))))
                         chained = true;
                     if (file < 7 && (whitePawns & (1ULL << ((rank - 1) * 8 + file + 1))))
                         chained = true;
                 }
-                if (chained)
-                {
+                if (chained) {
                     midGame += 6;
                     endGame += 2;
                 }
@@ -646,69 +566,57 @@ int classic_eval()
                     isolated = false;
                 if (file < 7 && blackPawnFile[file + 1] > 0)
                     isolated = false;
-                if (isolated)
-                {
+                if (isolated) {
                     midGame += 10;
                     endGame += 5;
                 }
 
                 // Passed Pawn
                 bool isPassed = true;
-                for (int r = rank - 1; r >= 0; r--)
-                {
-                    if (whitePawns & (1ULL << (r * 8 + file)))
-                    {
+                for (int r = rank - 1; r >= 0; r--) {
+                    if (whitePawns & (1ULL << (r * 8 + file))) {
                         isPassed = false;
                         break;
                     }
-                    if (file > 0 && (whitePawns & (1ULL << (r * 8 + file - 1))))
-                    {
+                    if (file > 0 && (whitePawns & (1ULL << (r * 8 + file - 1)))) {
                         isPassed = false;
                         break;
                     }
-                    if (file < 7 && (whitePawns & (1ULL << (r * 8 + file + 1))))
-                    {
+                    if (file < 7 && (whitePawns & (1ULL << (r * 8 + file + 1)))) {
                         isPassed = false;
                         break;
                     }
                 }
-                if (isPassed)
-                {
+                if (isPassed) {
                     midGame -= passedPawnMG[7 - rank];
                     endGame -= passedPawnEG[7 - rank];
                 }
 
                 // Chained Pawn
                 bool chained = false;
-                if (rank < 7)
-                {
+                if (rank < 7) {
                     if (file > 0 && (blackPawns & (1ULL << ((rank + 1) * 8 + file - 1))))
                         chained = true;
                     if (file < 7 && (blackPawns & (1ULL << ((rank + 1) * 8 + file + 1))))
                         chained = true;
                 }
-                if (chained)
-                {
+                if (chained) {
                     midGame -= 6;
                     endGame -= 2;
                 }
             }
         }
-        else if (p.type() == PieceType::ROOK)
-        {
+        else if (p.type() == PieceType::ROOK) {
             // Rook on open/semi-open file
             bool friendlyPawn = (p.color() == Color::WHITE) ? (whitePawnFile[file] > 0) : (blackPawnFile[file] > 0);
             bool enemyPawn = (p.color() == Color::WHITE) ? (blackPawnFile[file] > 0) : (whitePawnFile[file] > 0);
 
-            if (!friendlyPawn)
-            {
-                if (!enemyPawn)
-                {
+            if (!friendlyPawn) {
+                if (!enemyPawn) {
                     midGame += (p.color() == Color::WHITE ? 20 : -20);
                     endGame += (p.color() == Color::WHITE ? 12 : -12);
                 }
-                else
-                {
+                else {
                     midGame += (p.color() == Color::WHITE ? 10 : -10);
                     endGame += (p.color() == Color::WHITE ? 6 : -6);
                 }
@@ -720,17 +628,12 @@ int classic_eval()
     return score;
 }
 
-class NeuralEval
-{
+class NeuralEval {
 public:
     void loadWeights();
-
     int nn_eval(const Board &board, int ply);
-
     void refreshRoot(const Board &board);
-
     void pushMove(int from_ply, int to_ply, const Move &move, const Board &prev_board);
-
     std::array<float, 787> getInput(const Board &board);
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -744,11 +647,9 @@ public:
     uint64_t evalCalls = 0;
 
 private:
-    inline int getPieceFeatureIndex(Color color, PieceType type, int sq)
-    {
+    inline int getPieceFeatureIndex(Color color, PieceType type, int sq) {
         int offset = (color == Color::BLACK) ? 384 : 0;
-        switch (type.internal())
-        {
+        switch (type.internal()) {
         case PieceType::KING:
             return offset + sq;
         case PieceType::QUEEN:
@@ -766,8 +667,7 @@ private:
         }
     }
 
-    inline int getPieceFeatureIndex(Piece p, int sq)
-    {
+    inline int getPieceFeatureIndex(Piece p, int sq) {
         if (p == Piece::NONE)
             return -1;
         return getPieceFeatureIndex(p.color(), p.type(), sq);
@@ -789,12 +689,10 @@ private:
 
 template <typename Derived>
 void loadMatrix(const std::string &file,
-                Eigen::MatrixBase<Derived> &M)
-{
+                Eigen::MatrixBase<Derived> &M) {
     std::ifstream fin(file);
 
-    if (!fin)
-    {
+    if (!fin) {
         std::cerr << "Couldn't open " << file << std::endl;
         exit(1);
     }
@@ -806,12 +704,10 @@ void loadMatrix(const std::string &file,
 
 template <typename Derived>
 void loadVector(const std::string &file,
-                Eigen::MatrixBase<Derived> &V)
-{
+                Eigen::MatrixBase<Derived> &V) {
     std::ifstream fin(file);
 
-    if (!fin)
-    {
+    if (!fin) {
         std::cerr << "Couldn't open " << file << std::endl;
         exit(1);
     }
@@ -820,8 +716,7 @@ void loadVector(const std::string &file,
         fin >> V(i);
 }
 
-void NeuralEval::loadWeights()
-{
+void NeuralEval::loadWeights() {
     auto base = getExeDir();
 
     Eigen::MatrixXf W1_full(768, 787);
@@ -841,13 +736,11 @@ void NeuralEval::loadWeights()
     fin >> b4;
 }
 
-inline float relu(float x)
-{
+inline float relu(float x) {
     return x > 0 ? x : 0;
 }
 
-std::array<float, 787> NeuralEval::getInput(const Board &board)
-{
+std::array<float, 787> NeuralEval::getInput(const Board &board) {
     std::array<float, 787> x{};
     x.fill(0.0f);
 
@@ -855,8 +748,7 @@ std::array<float, 787> NeuralEval::getInput(const Board &board)
     int blackBishop = 0;
     int phase = 0;
 
-    for (int sq = 0; sq < 64; sq++)
-    {
+    for (int sq = 0; sq < 64; sq++) {
         Piece p = board.at(Square(sq));
 
         if (p == Piece::NONE)
@@ -866,8 +758,7 @@ std::array<float, 787> NeuralEval::getInput(const Board &board)
 
         int offset = black ? 384 : 0;
 
-        switch (p.type().internal())
-        {
+        switch (p.type().internal()) {
         case PieceType::KING:
             x[offset + sq] = 1.0f;
             break;
@@ -901,13 +792,11 @@ std::array<float, 787> NeuralEval::getInput(const Board &board)
 
             phase++;
 
-            if (black)
-            {
+            if (black) {
                 blackBishop++;
                 x[782] += 1.0f;
             }
-            else
-            {
+            else {
                 whiteBishop++;
                 x[777] += 1.0f;
             }
@@ -968,8 +857,7 @@ std::array<float, 787> NeuralEval::getInput(const Board &board)
     return x;
 }
 
-int NeuralEval::nn_eval(const Board &board, int ply)
-{
+int NeuralEval::nn_eval(const Board &board, int ply) {
     evalCalls++;
     nnCalls++;
 
@@ -1026,23 +914,19 @@ int NeuralEval::nn_eval(const Board &board, int ply)
     return std::lround(out);
 }
 
-void NeuralEval::refreshRoot(const Board &board)
-{
+void NeuralEval::refreshRoot(const Board &board) {
     acc_stack[0] = b1;
 
-    for (int sq = 0; sq < 64; sq++)
-    {
+    for (int sq = 0; sq < 64; sq++) {
         Piece p = board.at(Square(sq));
         int idx = getPieceFeatureIndex(p, sq);
-        if (idx != -1)
-        {
+        if (idx != -1) {
             acc_stack[0] += W1_pieces.col(idx);
         }
     }
 }
 
-void NeuralEval::pushMove(int from_ply, int to_ply, const Move &move, const Board &prev_board)
-{
+void NeuralEval::pushMove(int from_ply, int to_ply, const Move &move, const Board &prev_board) {
     acc_stack[to_ply] = acc_stack[from_ply];
 
     Square from = move.from();
@@ -1054,46 +938,39 @@ void NeuralEval::pushMove(int from_ply, int to_ply, const Move &move, const Boar
     if (from_idx != -1)
         acc_stack[to_ply] -= W1_pieces.col(from_idx);
 
-    if (move.typeOf() == Move::ENPASSANT)
-    {
+    if (move.typeOf() == Move::ENPASSANT) {
         Square ep_sq = Square(to.file(), from.rank());
         Piece ep_pawn = prev_board.at(ep_sq);
         int ep_idx = getPieceFeatureIndex(ep_pawn, ep_sq.index());
         if (ep_idx != -1)
             acc_stack[to_ply] -= W1_pieces.col(ep_idx);
     }
-    else if (captured_piece != Piece::NONE)
-    {
+    else if (captured_piece != Piece::NONE) {
         int cap_idx = getPieceFeatureIndex(captured_piece, to.index());
         if (cap_idx != -1)
             acc_stack[to_ply] -= W1_pieces.col(cap_idx);
     }
 
-    if (move.typeOf() == Move::PROMOTION)
-    {
+    if (move.typeOf() == Move::PROMOTION) {
         PieceType promo_type = move.promotionType();
         int promo_idx = getPieceFeatureIndex(moving_piece.color(), promo_type, to.index());
         if (promo_idx != -1)
             acc_stack[to_ply] += W1_pieces.col(promo_idx);
     }
-    else
-    {
+    else {
         int to_idx = getPieceFeatureIndex(moving_piece, to.index());
         if (to_idx != -1)
             acc_stack[to_ply] += W1_pieces.col(to_idx);
     }
 
-    if (move.typeOf() == Move::CASTLING)
-    {
+    if (move.typeOf() == Move::CASTLING) {
         int r_from, r_to;
         Color c = moving_piece.color();
-        if ((to.index() % 8) == 6)
-        {
+        if ((to.index() % 8) == 6) {
             r_from = (c == Color::WHITE) ? 7 : 63;
             r_to = (c == Color::WHITE) ? 5 : 61;
         }
-        else
-        {
+        else {
             r_from = (c == Color::WHITE) ? 0 : 56;
             r_to = (c == Color::WHITE) ? 3 : 59;
         }
@@ -1105,16 +982,14 @@ void NeuralEval::pushMove(int from_ply, int to_ply, const Move &move, const Boar
 
 NeuralEval neural;
 
-int cachedNNEval(const Board &board, int ply)
-{
+int cachedNNEval(const Board &board, int ply) {
     uint64_t key = board.hash();
     size_t idx = key & EVAL_CACHE_MASK;
     EvalEntry &entry = evalCache[idx];
 
     evalCacheProbes++;
 
-    if (entry.key == key)
-    {
+    if (entry.key == key) {
         evalCacheHits++;
         return entry.score;
     }
@@ -1124,31 +999,26 @@ int cachedNNEval(const Board &board, int ply)
     return score;
 }
 
-int get_static_eval(const Board &board, int alpha, int beta, int ply)
-{
-    if (board.inCheck())
-    {
+int get_static_eval(const Board &board, int alpha, int beta, int ply) {
+    if (board.inCheck()) {
         return cachedNNEval(board, ply);
     }
 
     int classical_score = classic_eval();
 
     const int LAZY_MARGIN = 100;
-    if (classical_score + LAZY_MARGIN <= alpha)
-    {
+    if (classical_score + LAZY_MARGIN <= alpha) {
         return classical_score;
     }
 
-    if (classical_score - LAZY_MARGIN >= beta)
-    {
+    if (classical_score - LAZY_MARGIN >= beta) {
         return classical_score;
     }
 
     return cachedNNEval(board, ply);
 }
 
-int quiescence(int alpha, int beta, bool maximizingPlayer, int ply)
-{
+int quiescence(int alpha, int beta, bool maximizingPlayer, int ply) {
     node++;
     stats.nodes++;
 
@@ -1156,8 +1026,7 @@ int quiescence(int alpha, int beta, bool maximizingPlayer, int ply)
     size_t tt_index = key & TT_MASK;
     TTEntry &entry = tt[tt_index];
 
-    if (entry.key == key && entry.depth >= 0)
-    {
+    if (entry.key == key && entry.depth >= 0) {
         if (entry.flag == EXACT) return entry.score;
         if (entry.flag == LOWERBOUND && entry.score >= beta) return entry.score;
         if (entry.flag == UPPERBOUND && entry.score <= alpha) return entry.score;
@@ -1165,27 +1034,23 @@ int quiescence(int alpha, int beta, bool maximizingPlayer, int ply)
 
     int static_eval = get_static_eval(board, alpha, beta, ply);
 
-    if (outOfTime())
-    {
+    if (outOfTime()) {
         stopSearch = true;
         return static_eval;
     }
 
     bool inCheck = board.inCheck();
 
-    if (!inCheck)
-    {
+    if (!inCheck) {
         int standPat = static_eval;
 
-        if (maximizingPlayer)
-        {
+        if (maximizingPlayer) {
             if (standPat >= beta)
                 return beta;
 
             alpha = std::max(alpha, standPat);
         }
-        else
-        {
+        else {
             if (standPat <= alpha)
                 return alpha;
 
@@ -1197,10 +1062,8 @@ int quiescence(int alpha, int beta, bool maximizingPlayer, int ply)
     movegen::legalmoves(moves, board);
     orderMoves(moves, ply);
 
-    if (moves.empty())
-    {
-        if (inCheck)
-        {
+    if (moves.empty()) {
+        if (inCheck) {
             return maximizingPlayer
                        ? -MATE_SCORE + ply
                        : MATE_SCORE - ply;
@@ -1209,8 +1072,7 @@ int quiescence(int alpha, int beta, bool maximizingPlayer, int ply)
         return maximizingPlayer ? alpha : beta;
     }
 
-    for (const Move &move : moves)
-    {
+    for (const Move &move : moves) {
         if (stopSearch)
             break;
         if (!inCheck && !board.isCapture(move))
@@ -1233,15 +1095,13 @@ int quiescence(int alpha, int beta, bool maximizingPlayer, int ply)
         if (stopSearch)
             return maximizingPlayer ? alpha : beta;
 
-        if (maximizingPlayer)
-        {
+        if (maximizingPlayer) {
             alpha = std::max(alpha, score);
 
             if (alpha >= beta)
                 return beta;
         }
-        else
-        {
+        else {
             beta = std::min(beta, score);
 
             if (beta <= alpha)
@@ -1252,13 +1112,11 @@ int quiescence(int alpha, int beta, bool maximizingPlayer, int ply)
     return maximizingPlayer ? alpha : beta;
 }
 
-int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool wasNull = false)
-{
+int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool wasNull = false) {
     node++;
     stats.nodes++;
 
-    if (outOfTime())
-    {
+    if (outOfTime()) {
         stopSearch = true;
         return get_static_eval(board, alpha, beta, ply);
     }
@@ -1272,59 +1130,47 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
 
     TTEntry &entry = tt[tt_index];
 
-    if (entry.key == key)
-    {
+    if (entry.key == key) {
         stats.ttHit++;
 
-        if (entry.depth >= depth)
-        {
-            if (entry.flag == EXACT)
-            {
+        if (entry.depth >= depth) {
+            if (entry.flag == EXACT) {
                 return entry.score;
             }
-            if (entry.flag == LOWERBOUND)
-            {
+            if (entry.flag == LOWERBOUND) {
                 alpha = std::max(alpha, entry.score);
             }
-            if (entry.flag == UPPERBOUND)
-            {
+            if (entry.flag == UPPERBOUND) {
                 beta = std::min(beta, entry.score);
             }
-            if (alpha >= beta)
-            {
+            if (alpha >= beta) {
                 return entry.score;
             }
         }
     }
 
-    if (depth == 0)
-    {
+    if (depth == 0) {
 
         return quiescence(alpha, beta, maximizingPlayer, ply);
     }
 
     int NULL_RED = (depth >= 7 ? 3 : 2);
 
-    if (depth >= 4 and !wasNull and !board.inCheck() and !onlyKingsAndPawns())
-    {
+    if (depth >= 4 and !wasNull and !board.inCheck() and !onlyKingsAndPawns()) {
         stats.nullAtMax += maximizingPlayer;
         stats.nullAtMin += !maximizingPlayer;
         board.makeNullMove();
         stats.nullAttempts++;
         int score = minimax(depth - 1 - NULL_RED, ply + 1, alpha, beta, !maximizingPlayer, true);
         board.unmakeNullMove();
-        if (maximizingPlayer)
-        {
-            if (score >= beta)
-            {
+        if (maximizingPlayer) {
+            if (score >= beta) {
                 stats.nullCutoffs++;
                 return beta;
             }
         }
-        else
-        {
-            if (score <= alpha)
-            {
+        else {
+            if (score <= alpha) {
                 stats.nullCutoffs++;
                 return alpha;
             }
@@ -1336,11 +1182,9 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
 
     orderMoves(moves, ply);
 
-    if (moves.empty())
-    {
+    if (moves.empty()) {
 
-        if (board.inCheck())
-        {
+        if (board.inCheck()) {
 
             if (maximizingPlayer)
                 return -MATE_SCORE + ply; // Rewarding mate in less steps higher
@@ -1351,8 +1195,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
         return 0;
     }
 
-    if (maximizingPlayer)
-    {
+    if (maximizingPlayer) {
 
         int best = -INF;
 
@@ -1360,8 +1203,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
 
         int moveNumber = 0;
 
-        for (const Move &move : moves)
-        {
+        for (const Move &move : moves) {
             moveNumber++;
 
             if (stopSearch)
@@ -1376,8 +1218,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
             neural.pushMove(ply, ply + 1, move, prev_board);
 
             int score;
-            if (moveNumber == 1 or depth <= 2)
-            {
+            if (moveNumber == 1 or depth <= 2) {
                 score = minimax(
                     depth - 1,
                     ply + 1,
@@ -1385,14 +1226,12 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
                     beta,
                     false);
             }
-            else
-            {
+            else {
                 int reduction = 1;
 
                 bool canReduce = depth >= 4 and moveNumber >= 5 and !isCapture and !board.inCheck();
 
-                if (canReduce)
-                {
+                if (canReduce) {
                     stats.lmrAttempts++;
                     score = minimax(
                         depth - 1 - reduction,
@@ -1401,8 +1240,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
                         alpha + 1,
                         false);
 
-                    if (score > alpha and score < beta)
-                    {
+                    if (score > alpha and score < beta) {
                         stats.lmrResearches++;
                         score = minimax(
                             depth - 1,
@@ -1412,8 +1250,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
                             false);
                     }
                 }
-                else
-                {
+                else {
                     score = minimax(
                         depth - 1,
                         ply + 1,
@@ -1421,8 +1258,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
                         alpha + 1,
                         false);
 
-                    if (score > alpha && score < beta)
-                    {
+                    if (score > alpha && score < beta) {
                         stats.pvsResearches++;
                         score = minimax(
                             depth - 1,
@@ -1438,8 +1274,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
             if (stopSearch)
                 return best;
 
-            if (score > best)
-            {
+            if (score > best) {
 
                 best = score;
 
@@ -1449,10 +1284,8 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
             best = std::max(best, score);
             alpha = std::max(alpha, best);
 
-            if (beta <= alpha)
-            {
-                if (!board.isCapture(move))
-                {
+            if (beta <= alpha) {
+                if (!board.isCapture(move)) {
                     killerMoves[ply][1] = killerMoves[ply][0];
                     killerMoves[ply][0] = move;
 
@@ -1472,8 +1305,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
         else
             flag = EXACT;
 
-        if (!stopSearch)
-        {
+        if (!stopSearch) {
             if (entry.key != key || depth >= tt[tt_index].depth) {
                 tt[tt_index] = {key, depth, best, flag, bestMove};
                 stats.ttWrites++;
@@ -1482,8 +1314,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
 
         return best;
     }
-    else
-    {
+    else {
 
         int best = INF;
 
@@ -1491,8 +1322,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
 
         int moveNumber = 0;
 
-        for (const Move &move : moves)
-        {
+        for (const Move &move : moves) {
             moveNumber++;
             if (stopSearch)
                 break;
@@ -1506,8 +1336,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
             neural.pushMove(ply, ply + 1, move, prev_board);
 
             int score;
-            if (moveNumber == 1 or depth <= 2)
-            {
+            if (moveNumber == 1 or depth <= 2) {
                 score =
                     minimax(depth - 1,
                             ply + 1,
@@ -1515,13 +1344,11 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
                             beta,
                             true);
             }
-            else
-            {
+            else {
                 int reduction = 1;
                 bool canReduce = depth >= 4 and moveNumber >= 5 and !isCapture and !board.inCheck();
 
-                if (canReduce)
-                {
+                if (canReduce) {
                     stats.lmrAttempts++;
                     score =
                         minimax(
@@ -1531,8 +1358,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
                             beta,
                             true);
 
-                    if (score > alpha and score < beta)
-                    {
+                    if (score > alpha and score < beta) {
                         stats.lmrResearches++;
                         score =
                             minimax(
@@ -1543,8 +1369,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
                                 true);
                     }
                 }
-                else
-                {
+                else {
                     score =
                         minimax(
                             depth - 1,
@@ -1553,8 +1378,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
                             beta,
                             true);
 
-                    if (score > alpha && score < beta)
-                    {
+                    if (score > alpha && score < beta) {
                         stats.pvsResearches++;
                         score =
                             minimax(
@@ -1572,8 +1396,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
             if (stopSearch)
                 return best;
 
-            if (score < best)
-            {
+            if (score < best) {
 
                 best = score;
 
@@ -1583,10 +1406,8 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
             best = std::min(best, score);
             beta = std::min(beta, best);
 
-            if (beta <= alpha)
-            {
-                if (!board.isCapture(move))
-                {
+            if (beta <= alpha) {
+                if (!board.isCapture(move)) {
                     killerMoves[ply][1] = killerMoves[ply][0];
                     killerMoves[ply][0] = move;
 
@@ -1607,8 +1428,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
         else
             flag = EXACT;
 
-        if (!stopSearch)
-        {
+        if (!stopSearch) {
             if (entry.key != key || depth >= tt[tt_index].depth) {
                 tt[tt_index] = {key, depth, best, flag, bestMove};
                 stats.ttWrites++;
@@ -1619,8 +1439,7 @@ int minimax(int depth, int ply, int alpha, int beta, bool maximizingPlayer, bool
     }
 }
 
-Move search()
-{
+Move search() {
     std::cerr << "Entered search\n";
     node = 0;
     stats = SearchStats{};
@@ -1645,8 +1464,7 @@ Move search()
     neural.refreshRoot(board);
 
     for (currentDepth; currentDepth <= maxDepth;
-         currentDepth++)
-    {
+         currentDepth++) {
         std::cerr << "Depth " << currentDepth << std::endl;
 
         Movelist moves;
@@ -1665,8 +1483,7 @@ Move search()
         int alpha = -INF, beta = INF;
         bool first = true;
 
-        for (const Move &move : moves)
-        {
+        for (const Move &move : moves) {
             if (stopSearch)
                 break;
 
@@ -1679,26 +1496,20 @@ Move search()
 
             int score;
 
-            if (first)
-            {
+            if (first) {
                 score = minimax(currentDepth - 1, 1, alpha, beta, !maximizingPlayer);
                 first = false;
             }
-            else
-            {
-                if (maximizingPlayer)
-                {
+            else {
+                if (maximizingPlayer) {
                     score = minimax(currentDepth - 1, 1, alpha, alpha + 1, false);
-                    if (score > alpha and score < beta)
-                    {
+                    if (score > alpha and score < beta) {
                         score = minimax(currentDepth - 1, 1, alpha, beta, false);
                     }
                 }
-                else
-                {
+                else {
                     score = minimax(currentDepth - 1, 1, beta - 1, beta, true);
-                    if (score > alpha and score < beta)
-                    {
+                    if (score > alpha and score < beta) {
                         score = minimax(currentDepth - 1, 1, alpha, beta, true);
                     }
                 }
@@ -1707,11 +1518,9 @@ Move search()
             board.unmakeMove(
                 move);
 
-            if (maximizingPlayer)
-            {
+            if (maximizingPlayer) {
                 if (score >
-                    bestScore)
-                {
+                    bestScore) {
                     bestScore =
                         score;
 
@@ -1720,11 +1529,9 @@ Move search()
                 }
                 alpha = std::max(alpha, bestScore);
             }
-            else
-            {
+            else {
                 if (score <
-                    bestScore)
-                {
+                    bestScore) {
                     bestScore =
                         score;
 
@@ -1736,8 +1543,7 @@ Move search()
             if (alpha >= beta)
                 break;
         }
-        if (stopSearch)
-        {
+        if (stopSearch) {
             break;
         }
         lastCompletedBestMove = bestMove;
@@ -1751,8 +1557,7 @@ Move search()
     std::cout << "Info string TT probes: " << stats.ttProbe << '\n';
     std::cout << "Info string TT hits: " << stats.ttHit << '\n';
 
-    if (stats.ttProbe)
-    {
+    if (stats.ttProbe) {
         std::cout << "Info string TT hit rate: "
                   << 100.0 * stats.ttHit / stats.ttProbe
                   << "%\n";
@@ -1761,8 +1566,7 @@ Move search()
 
     std::cout << "info string Null cutoffs: " << stats.nullCutoffs << '\n';
 
-    if (stats.nullAttempts)
-    {
+    if (stats.nullAttempts) {
         std::cout << "info string Null success: "
                   << 100.0 * stats.nullCutoffs / stats.nullAttempts
                   << "%\n";
@@ -1772,8 +1576,7 @@ Move search()
 
     std::cout << "info string lmr researches: " << stats.lmrResearches << '\n';
 
-    if (stats.lmrAttempts)
-    {
+    if (stats.lmrAttempts) {
         std::cout << "info string Null success: "
                   << 100.0 * stats.lmrResearches / stats.lmrAttempts
                   << "%\n";
@@ -1795,8 +1598,7 @@ Move search()
     std::cout << "info string NN calls = " << nnCalls << '\n';
     std::cout << "info string Eval cache probes = " << evalCacheProbes << '\n';
     std::cout << "info string Eval cache hits = " << evalCacheHits << '\n';
-    if (evalCacheProbes)
-    {
+    if (evalCacheProbes) {
         std::cout << "info string Eval cache hit rate: "
                   << 100.0 * evalCacheHits / evalCacheProbes
                   << "%\n";
@@ -1808,8 +1610,7 @@ Move search()
     return lastCompletedBestMove;
 }
 
-void parsePosition(const std::string &command)
-{
+void parsePosition(const std::string &command) {
 
     std::stringstream ss(command);
 
@@ -1818,18 +1619,15 @@ void parsePosition(const std::string &command)
     ss >> token;
     ss >> token;
 
-    if (token == "startpos")
-    {
+    if (token == "startpos") {
 
         board.setFen(constants::STARTPOS);
     }
-    else if (token == "fen")
-    {
+    else if (token == "fen") {
 
         std::string fen;
 
-        for (int i = 0; i < 6; i++)
-        {
+        for (int i = 0; i < 6; i++) {
 
             ss >> token;
 
@@ -1842,11 +1640,9 @@ void parsePosition(const std::string &command)
         board.setFen(fen);
     }
 
-    if (ss >> token && token == "moves")
-    {
+    if (ss >> token && token == "moves") {
 
-        while (ss >> token)
-        {
+        while (ss >> token) {
 
             Move move =
                 uci::uciToMove(board, token);
@@ -1858,8 +1654,7 @@ void parsePosition(const std::string &command)
 
 int wtime = 0, btime = 0, winc = 0, binc = 0;
 
-void parseGo(const std::string &command)
-{
+void parseGo(const std::string &command) {
 
     std::stringstream ss(command);
 
@@ -1867,38 +1662,31 @@ void parseGo(const std::string &command)
 
     ss >> token;
 
-    while (ss >> token)
-    {
+    while (ss >> token) {
 
-        if (token == "wtime")
-        {
+        if (token == "wtime") {
 
             ss >> wtime;
         }
-        else if (token == "btime")
-        {
+        else if (token == "btime") {
 
             ss >> btime;
         }
-        else if (token == "winc")
-        {
+        else if (token == "winc") {
 
             ss >> winc;
         }
-        else if (token == "binc")
-        {
+        else if (token == "binc") {
 
             ss >> binc;
         }
-        else if (token == "depth")
-        {
+        else if (token == "depth") {
             ss >> fixedDepth;
         }
     }
 }
 
-int main()
-{
+int main() {
     Eigen::setNbThreads(1);
 
     neural.loadWeights();
@@ -1907,35 +1695,28 @@ int main()
 
     std::string line;
 
-    while (std::getline(std::cin, line))
-    {
+    while (std::getline(std::cin, line)) {
 
-        if (line == "uci")
-        {
+        if (line == "uci") {
 
             std::cout << "id name trialBot1" << std::endl;
             std::cout << "id author Ujjwal" << std::endl;
             std::cout << "uciok" << std::endl;
         }
 
-        else if (line == "isready")
-        {
+        else if (line == "isready") {
 
             std::cout << "readyok" << std::endl;
         }
 
-        else if (line == "ucinewgame")
-        {
+        else if (line == "ucinewgame") {
             std::fill(tt.begin(), tt.end(), TTEntry{});
 
             memset(killerMoves, 0, sizeof(killerMoves));
 
-            for (int i = 0; i < 2; i++)
-            {
-                for (int j = 0; j < 64; j++)
-                {
-                    for (int k = 0; k < 64; k++)
-                    {
+            for (int i = 0; i < 2; i++) {
+                for (int j = 0; j < 64; j++) {
+                    for (int k = 0; k < 64; k++) {
                         history[i][j][k] /= 4;
                     }
                 }
@@ -1944,34 +1725,28 @@ int main()
             board.setFen(constants::STARTPOS);
         }
 
-        else if (line.rfind("position", 0) == 0)
-        {
+        else if (line.rfind("position", 0) == 0) {
 
             parsePosition(line);
         }
 
-        else if (line.rfind("go", 0) == 0)
-        {
+        else if (line.rfind("go", 0) == 0) {
             parseGo(line);
 
-            if (board.sideToMove() == Color::WHITE)
-            {
+            if (board.sideToMove() == Color::WHITE) {
                 timeLimitMs = moveBudget(wtime, winc);
             }
-            else
-            {
+            else {
                 timeLimitMs = moveBudget(btime, binc);
             }
 
             Move bestMove = search();
 
-            if (bestMove == Move::NULL_MOVE)
-            {
+            if (bestMove == Move::NULL_MOVE) {
 
                 std::cout << "bestmove 0000" << std::endl;
             }
-            else
-            {
+            else {
 
                 std::cout << "bestmove "
                           << uci::moveToUci(bestMove)
@@ -1979,8 +1754,7 @@ int main()
             }
         }
 
-        else if (line == "quit")
-        {
+        else if (line == "quit") {
 
             break;
         }
